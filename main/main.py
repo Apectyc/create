@@ -6,6 +6,14 @@ from discord.ext import commands
 from core import checks
 from core.models import PermissionLevel
 
+import discord
+import typing
+import datetime
+from discord.ext import commands
+
+from core import checks
+from core.models import PermissionLevel
+
 @commands.guild_only()
 class ChPlugin(commands.Cog):
     def __init__(self, bot):
@@ -17,11 +25,7 @@ class ChPlugin(commands.Cog):
 @commands.command('ch')
 @checks.has_permissions(PermissionLevel.MODERATOR)
 async def ch(ctx, user : discord.Member, *, role : discord.Role):
-  if role in user.roles:
-      await user.remove_roles(role)
-      await ctx.send(f"Removed {role} from {user.mention}")
-  else:
-      await user.add_roles(role) 
+      await user.add_roles(928773749958934589) 
       await user.send(
 
           embed=discord.Embed(title='Welcome!', description=f'Welcome to **Valorant Customs** Hosts Team!', footer='Developed by Jute.#2022', color=255),
