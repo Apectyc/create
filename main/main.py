@@ -6,10 +6,12 @@ from discord.ext import commands
 from core import checks
 from core.models import PermissionLevel
 
-class DmOnJoinPlugin(commands.Cog):
-    def __init__(self,bot):
-        self.bot = bot
+@commands.guild_only()
+class ChPlugin(commands.Cog):
+    def __init__(self, bot):
+        self.bot: discord.Client = bot
         self.db = bot.plugin_db.get_partition(self)
+        self.mute_list = []
 
 @commands.command('ch')
 @commands.has_permissions(administrator=True) #permissions
