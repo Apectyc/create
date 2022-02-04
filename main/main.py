@@ -13,11 +13,12 @@ class ChPlugin(commands.Cog):
         self.db = bot.plugin_db.get_partition(self)
         self.mute_list = []
 
+
 @commands.command('ch')
-@commands.has_permissions(administrator=True) #permissions
+@checks.has_permissions(PermissionLevel.MODERATOR)
 async def ch(ctx, user : discord.Member, *, role : discord.Role):
   if role in user.roles:
-      await user.remove_roles(role) #removes the role if user already has
+      await user.remove_roles(role)
       await ctx.send(f"Removed {role} from {user.mention}")
   else:
       await user.add_roles(role) 
@@ -30,6 +31,5 @@ async def ch(ctx, user : discord.Member, *, role : discord.Role):
         
       await ctx.send(f"Added {role} to {user.mention} and User DMed")
     
-
 def setup(bot):
-    bot.add_cog(ModerationPlugin(bot))
+    bot.add_cog(ChPlugin(bot))
