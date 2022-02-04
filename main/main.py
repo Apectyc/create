@@ -1,114 +1,197 @@
-import asyncio
 import discord
+import typing
+import datetime
 from discord.ext import commands
 
 from core import checks
 from core.models import PermissionLevel
 
 
-class ReactionRole(commands.Cog):
-    def __init__(self,bot):
-        self.bot = bot
+@commands.guild_only()
+class ModerationPlugin(commands.Cog):
+    def __init__(self, bot):
+        self.bot: discord.Client = bot
         self.db = bot.plugin_db.get_partition(self)
-        self.roles = dict()
-        asyncio.create_task(self._set_config())
+        self.mute_list = []
 
-    async def _set_config(self):
-        config = await self.db.find_one({'_id': 'config'})
-        if config is None:
-            return
-        self.roles = dict(config.get("roles", {}))
-
-    @commands.group(aliases=["rr"])
-    async def rolereaction(self, ctx):
-        if ctx.invoked_subcommand is None:
-            return
-
-    @rolereaction.command()
+    @commands.command(aliases=["lc", "setmodlogs", "modlogs"])
     @checks.has_permissions(PermissionLevel.MODERATOR)
-    async def add(self,ctx,emoji: discord.Emoji, role: discord.Role):
-        emote = emoji.name if emoji.id is None else emoji.id
+    async def logchanel(self, ctx, channel: discord.TextChannel):
+        """Set Up The Log Channel For posting mod-logs
+        Usage:
+        logchannel #channel
+        """
+        await self.db.find_one_and_update(
+        {'_id': 'config'},
+        {'$set': {'logs': {'channel': str(channel.id)}}},
+        upsert=True
+        )
+        await ctx.send(f"{channel.mention} set for mod-logs!")
 
-        if emote in self.roles:
-            updated = True
+    @commands.command(aliases=["banhammer"])
+    @checks.has_permissions(PermissionLevel.MODERATOR)
+    async def ban(self, ctx, members: commands.Greedy[discord.Member], delete_days: typing.Optional[int] = 0, *,
+                  reason: str = None):
+        """Ban A Single User or a group of members
+        Usage:
+        ban @member Gave a ban
+        ban @member1 @member2 @member3 Spammers
+        """
+
+        config = (await self.db.find_one({'_id': 'config'}))
+        if config is None:
+            await ctx.send("No mod-log channel configured")
+            return
         else:
-            updated = False
-        self.roles[emote] = role.id
-
-        await self.db.find_one_and_update(
-            {"_id": "config"},
-            {"$set": {"roles": self.roles}},
-            upsert=True
-        )
-
-        await ctx.send(f"Successfully {'updated'if updated else 'pointed'} {emoji} towards {role.name}")
-
-    @rolereaction.command()
-    @checks.has_permissions(PermissionLevel.MODERATOR)
-    async def remove(self, ctx, emoji: discord.Emoji):
-        """Remove a role from the role reaction list"""
-        emote = emoji.name if emoji.id is None else emoji.id
-
-        if emote not in self.roles:
-            await ctx.send("The Given Emote Was Not Configured")
-            return
-
-        self.roles.pop(emote)
-
-        await self.db.find_one_and_update(
-            {"_id": "config"},
-            {"$set": {"roles": self.roles}},
-            upsert=True
-        )
-
-        await ctx.send(f"Removed {emoji} from rolereaction list")
-        return
-
-    @rolereaction.command(aliases=["sc"])
-    @checks.has_permissions(PermissionLevel.MODERATOR)
-    async def set_channel(self, ctx, channel = discord.TextChannel):
-        await self.db.find_one_and_update(
-            {"_id": "config"},
-            {"$set": {"channel": str(channel.id)}},
-            upsert=True
-        )
-
-        await ctx.send(f"{channel.mention} has been set!")
-
-    @rolereaction.command()
-    @checks.has_permissions(PermissionLevel.MODERATOR)
-    async def react(self, ctx, id: discord.Message.id):
-        """React On The Message"""
-        config = await self.db.find_one({"_id": "config"})
-        if config is None:
-            return
-
-        dbchannel = config["channel"]
-
-        channel: discord.TextChannel = await ctx.guild.get_channel(int(dbchannel))
+            channel = ctx.guild.get_channel(int(config["logs"]['channel']))
 
         if channel:
-            msg: discord.Message = await channel.fetch_message(int(id))
-            for x in self.roles:
-                await msg.add_reaction(x)
+            try:
+                for member in members:
+                    await member.ban(delete_message_days=delete_days, reason=f'{reason if reason else None}')
+                    embed = discord.Embed(
+                        color=discord.Color.red(),
+                        title=f"{member.display_name}#{member.discriminator} was banned",
+                        timestamp=datetime.datetime.utcnow()
+                    )
+                    embed.add_field(name="Moderator", value=f"{ctx.author.name}#{ctx.author.discriminator}",
+                                    inline=False)
+                    if reason:
+                        embed.add_field(name="Reason", value=reason, inline=False)
 
-    @commands.Cog.listener()
-    async def on_raw_reaction_add(self,payload: discord.RawReactionActionEvent):
-        user: discord.User = self.bot.get_user(int(payload.user_id))
-        guild: discord.Guild = self.bot.config.get("GUILD_ID")
+                    await channel.send(embed=embed)
+            except discord.Forbidden:
+                await ctx.send("I Have No Permission To ban the user")
+            except Exception as e:
+                await ctx.send("An Error Occurred, Check Logs For More Details")
+                raise e
 
-        if user.bot:
+    @commands.command(aliases=["getout"])
+    @checks.has_permissions(PermissionLevel.MODERATOR)
+    async def kick(self, ctx, members: commands.Greedy[discord.Member], *, reason: str = None):
+        """Kick a Single member or a group of members
+                Usage:
+                kick @member Gave a kick
+                kick @member1 @member2 @member3 Spammers
+                """
+
+        config = (await self.db.find_one({'_id': 'config'}))
+        if config is None:
+            await ctx.send("No mod-log channel configured")
+            return
+        else:
+            channel = ctx.guild.get_channel(int(config["logs"]['channel']))
+
+        if channel:
+            try:
+                for member in members:
+                    await member.kick(reason=f'{reason if reason else None}')
+                    embed = discord.Embed(
+                        color=discord.Color.red(),
+                        title=f"{member.display_name}#{member.discriminator} was kicked",
+                        timestamp=datetime.datetime.utcnow()
+                    )
+                    embed.add_field(name="Moderator", value=f"{ctx.author.name}#{ctx.author.discriminator}",
+                                    inline=False)
+                    if reason:
+                        embed.add_field(name="Reason", value=reason, inline=False)
+
+                    await channel.send(embed=embed)
+            except discord.Forbidden:
+                await ctx.send("I Have No Permission To kick the user")
+            except Exception as e:
+                await ctx.send("An Error Occurred, Check Logs For More Details")
+                raise e
+
+    # @commands.command()
+    # @checks.has_permissions(PermissionLevel.MODERATOR)
+    # async def mute(self, ctx, members: commands.Greedy[discord.Member], *, reason: str = None):
+    #     """Mute a Single member or a group of members
+    #
+    #                     Usage:
+    #                     mute @member Gave a kick
+    #                     mute @member1 @member2 @member3 Spammers
+    #                     """
+    #
+    #     config = (await self.db.find_one({'_id': 'config'}))
+    #     if config is None:
+    #         await ctx.send("No mod-log channel configured")
+    #         return
+    #     else:
+    #         channel = ctx.guild.get_channel(int(config["logs"]['channel']))
+    #
+    #      if channel:
+
+    @commands.command()
+    @checks.has_permissions(PermissionLevel.MODERATOR)
+    async def warn(self, ctx: commands.Context,  member: discord.Member, *, reason: str):
+        """Warn a member
+        Usage:
+        warn @member <...reason>
+        """
+        if member.bot:
+            await ctx.send("Bot's Cannot be warned")
             return
 
-        member: discord.Member = await guild.fetch_member(payload.user_id)
-
-        if member is None:
+        chconfig = (await self.db.find_one({'_id': 'config'}))
+        if chconfig is None:
+            await ctx.send("No mod-log channel configured")
             return
+        else:
+            channel = ctx.guild.get_channel(int(chconfig["logs"]['channel']))
+        if channel:
+            config = await self.db.find_one({"_id": "warns"})
 
-        if payload.emoji.name in self.roles or payload.emoji.id in self.roles:
-            role = await guild.get_role(self.roles[payload.emoji.name or payload.emoji.id])
-            await member.add_roles(role)
+            if config:
+                userwarns = config[str(member.id)]
 
+                if userwarns is None:
+                    userw = []
+                    userw.append({"reason": reason, "mod": ctx.author.id})
+                    await self.db.find_one_and_update(
+                        {"_id": "warns"},
+                        {"$set": {str(member.id): userw}},
+                        upsert=True
+                    )
+                    await ctx.send(f"Successfully warned **{member.name}#{member.discriminator}**`({reason})`")
+                    await channel.send(
+                        embed=self.generateWarnEmbed(str(member.id), str(ctx.author.id), len(userw), reason))
+                    del userw
+                    return
+                else:
+                    userw = userwarns.copy()
+                    userw.append({"reason": reason, "mod": ctx.author.id})
+                    await self.db.find_one_and_update(
+                        {"_id": "warns"},
+                        {"$set": {str(member.id): userw}},
+                        upsert=True)
+                    await ctx.send(f"Successfully warned **{member.name}#{member.discriminator}**`({reason})`")
+                    await channel.send(embed=(await self.generateWarnEmbed(str(member.id), str(ctx.author.id), len(userw), reason)))
+                    del userw
+                    return
+            else:
+                userw = []
+                userw.append({"reason": reason, "mod": ctx.author.id})
+                await self.db.find_one_and_update(
+                    {"_id": "warns"},
+                    {"$set": {str(str(member.id)): userw}},
+                    upsert=True)
+                await ctx.send(f"Successfully warned **{member.name}#{member.discriminator}**`({reason})`")
+                await channel.send(embed=(await self.generateWarnEmbed(str(member.id), str(ctx.author.id), len(userw), reason)))
+                del userw
+                return
+
+    async def generateWarnEmbed(self, memberid, modid, warning, reason):
+        member: discord.User = await self.bot.fetch_user(int(memberid))
+        mod: discord.User = await self.bot.fetch_user(int(modid))
+        embed = discord.Embed()
+        embed.colour = discord.Colour.red()
+        embed.set_author(name=f"Warn | {member.name}#{member.discriminator}", icon_url=member.avatar_url)
+        embed.add_field(name="User", value=f"{member.name}#{member.discriminator}")
+        embed.add_field(name="Moderator", value=f"<@{modid}>`({mod.name}#{mod.discriminator})`")
+        embed.add_field(name="Reason", value=reason)
+        embed.add_field(name="Total Warnings", value=warning)
+        return embed
 
 def setup(bot):
-    bot.add_cog(ReactionRole(bot))
+    bot.add_cog(ModerationPlugin(bot))
